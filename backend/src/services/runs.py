@@ -1,11 +1,11 @@
 import os,json,csv,io
-from pathlib import Path
 from redis import Redis
 from sqlalchemy import select
 from fastapi import HTTPException
 from src.models.run import Run
 from src.models.review import Review
 from src.services import studies
+from src.services import methods as method_service
 from src.services.domain_validation import validate_parameters
 from src.services.audits import log
 from src.utils.serializers import record,now,checksum
@@ -17,8 +17,11 @@ def create(db,data,user):
     try: params=validate_parameters(data.parameters)
     except (ValueError,TypeError) as e: raise HTTPException(422,str(e))
     snapshot=[{'source_key':x['source_key'],'values':x['values']} for x in rows]
-    run=Run(study_id=data.study_id,name=data.name,parameters=params,snapshot=snapshot,checksum=checksum(snapshot),created_at=now(),status='queued')
-    db.add(run);db.flush();log(db,user,'run.queue',str(run.id));db.commit()
+    # 新研究绑定排队当时生效口径；口径标识随运行永久冻结，迟归计算不得混入另一版。
+    method=method_service.active_method(db)
+    run=Run(study_id=data.study_id,name=data.name,method=method,parameters=params,
+            snapshot=snapshot,checksum=checksum(snapshot),created_at=now(),status='queued')
+    db.add(run);db.flush();log(db,user,'run.queue',f'{run.id} method={method}');db.commit()
     Redis.from_url(os.environ['REDIS_URL']).rpush('analysis-queue',run.id)
     return record(run)
 
@@ -42,7 +45,9 @@ def export(db,id,user):
     r=get(db,id)
     if r['status']!='completed': raise HTTPException(409,'尚无完成结果')
     if user.role=='viewer' and not r['review']: raise HTTPException(403,'观察员只能导出已复核结果')
-    stream=io.StringIO();w=csv.writer(stream);w.writerow(['运行编号','输入校验SHA256','指标','值'])
-    for k,v in r['result']['metrics'].items(): w.writerow([id,r['checksum'],k,json.dumps(v,ensure_ascii=False) if isinstance(v,(dict,list)) else v])
-    w.writerow([id,r['checksum'],'解释',r['result']['interpretation']]);log(db,user,'run.export',id);db.commit()
-    return '\ufeff'+stream.getvalue()
+    stream=io.StringIO();w=csv.writer(stream)
+    # 下载沿用运行冻结口径：导出内容包含口径标识与按该口径计算的指标，获批研究不随迁移改变。
+    w.writerow(['运行编号','分析口径','输入校验SHA256','指标','值'])
+    for k,v in r['result']['metrics'].items(): w.writerow([id,r['method'],r['checksum'],k,json.dumps(v,ensure_ascii=False) if isinstance(v,(dict,list)) else v])
+    w.writerow([id,r['method'],r['checksum'],'解释',r['result']['interpretation']]);log(db,user,'run.export',f'{id} method={r["method"]}');db.commit()
+    return '﻿'+stream.getvalue()

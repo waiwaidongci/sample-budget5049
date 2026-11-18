@@ -8,7 +8,8 @@ from src.schemas.study import StudyInput
 from src.schemas.observation import ObservationInput
 from src.schemas.run import RunInput
 from src.schemas.review import ReviewInput
-from src.controllers import research
+from src.schemas.migration import MethodSwitchInput,MigrationCreateInput
+from src.controllers import research,migration as migration_controller
 from src.services import runs,studies
 from src.models.audit import Audit
 from src.models.observation import Observation
@@ -17,6 +18,22 @@ from src.utils.serializers import record
 router=APIRouter()
 @router.get('/domain')
 def domain(user=Depends(current_user)): return DOMAIN
+@router.get('/methods')
+def methods(db=Depends(get_db),user=Depends(current_user)): return migration_controller.list_methods(db)
+@router.post('/methods/switch')
+def switch_method(data:MethodSwitchInput,db=Depends(get_db),user=Depends(admin)): return migration_controller.switch_method(db,data,user)
+@router.get('/migrations')
+def list_migrations(db=Depends(get_db),user=Depends(current_user)): return migration_controller.list_migrations(db)
+@router.post('/migrations')
+def create_migration(data:MigrationCreateInput,db=Depends(get_db),user=Depends(admin)): return migration_controller.create_migration(db,data,user)
+@router.get('/migrations/{batch_id}')
+def get_migration(batch_id:int,db=Depends(get_db),user=Depends(current_user)): return migration_controller.get_migration(db,batch_id)
+@router.post('/migrations/{batch_id}/switch')
+def switch_migration(batch_id:int,db=Depends(get_db),user=Depends(admin)): return migration_controller.switch_migration(db,batch_id,user)
+@router.post('/migrations/{batch_id}/rollback')
+def rollback_migration(batch_id:int,db=Depends(get_db),user=Depends(admin)): return migration_controller.rollback_migration(db,batch_id,user)
+@router.post('/migrations/{batch_id}/abandon')
+def abandon_migration(batch_id:int,db=Depends(get_db),user=Depends(admin)): return migration_controller.abandon_migration(db,batch_id,user)
 @router.get('/overview')
 def overview(db=Depends(get_db),user=Depends(current_user)): return research.overview(db)
 @router.get('/studies')
